@@ -8,7 +8,7 @@ from botocore.credentials import (
     AssumeRoleCredentialFetcher,
     CredentialResolver,
     DeferredRefreshableCredentials,
-    JSONFileCache
+    JSONFileCache,
 )
 from botocore.exceptions import ClientError
 from botocore.session import Session
@@ -23,51 +23,55 @@ SDC_SOURCE_LINENO_COLUMN = "_sdc_source_lineno"
 
 
 def retry_pattern():
-    return backoff.on_exception(backoff.expo,
-                                ClientError,
-                                max_tries=5,
-                                on_backoff=log_backoff_attempt,
-                                factor=10)
+    return backoff.on_exception(
+        backoff.expo,
+        ClientError,
+        max_tries=5,
+        on_backoff=log_backoff_attempt,
+        factor=10,
+    )
 
 
 def log_backoff_attempt(details):
-    LOGGER.info("Error detected communicating with Amazon, triggering backoff: %d try", details.get("tries"))
+    LOGGER.info(
+        "Error detected communicating with Amazon, triggering backoff: %d try",
+        details.get("tries"),
+    )
 
 
-class AssumeRoleProvider():
-    METHOD = 'assume-role'
+class AssumeRoleProvider:
+    METHOD = "assume-role"
 
     def __init__(self, fetcher):
         self._fetcher = fetcher
 
     def load(self):
         return DeferredRefreshableCredentials(
-            self._fetcher.fetch_credentials,
-            self.METHOD
+            self._fetcher.fetch_credentials, self.METHOD
         )
 
 
 @retry_pattern()
 def setup_aws_client(config):
-    role_arn = "arn:aws:iam::{}:role/{}".format(config['account_id'].replace('-', ''),
-                                                config['role_name'])
+    role_arn = "arn:aws:iam::{}:role/{}".format(
+        config["account_id"].replace("-", ""), config["role_name"]
+    )
     session = Session()
     fetcher = AssumeRoleCredentialFetcher(
         session.create_client,
         session.get_credentials(),
         role_arn,
         extra_args={
-            'DurationSeconds': 3600,
-            'RoleSessionName': 'TapS3CSV',
-            'ExternalId': config['external_id']
+            "DurationSeconds": 3600,
+            "RoleSessionName": "TapS3CSV",
+            "ExternalId": config["external_id"],
         },
-        cache=JSONFileCache()
+        cache=JSONFileCache(),
     )
 
     refreshable_session = Session()
     refreshable_session.register_component(
-        'credential_provider',
-        CredentialResolver([AssumeRoleProvider(fetcher)])
+        "credential_provider", CredentialResolver([AssumeRoleProvider(fetcher)])
     )
 
     LOGGER.info("Attempting to assume_role on RoleArn: %s", role_arn)
@@ -75,7 +79,7 @@ def setup_aws_client(config):
 
 
 def get_sampled_schema_for_table(config, table_spec):
-    LOGGER.info('Sampling records to determine table schema.')
+    LOGGER.info("Sampling records to determine table schema.")
 
     s3_files_gen = get_input_files_for_table(config, table_spec)
 
@@ -85,18 +89,16 @@ def get_sampled_schema_for_table(config, table_spec):
         return {}
 
     metadata_schema = {
-        SDC_SOURCE_BUCKET_COLUMN: {'type': 'string'},
-        SDC_SOURCE_FILE_COLUMN: {'type': 'string'},
-        SDC_SOURCE_LINENO_COLUMN: {'type': 'integer'},
-        csv.SDC_EXTRA_COLUMN: {'type': 'array', 'items': {'type': 'string'}},
+        SDC_SOURCE_BUCKET_COLUMN: {"type": "string"},
+        SDC_SOURCE_FILE_COLUMN: {"type": "string"},
+        SDC_SOURCE_LINENO_COLUMN: {"type": "integer"},
+        csv.SDC_EXTRA_COLUMN: {"type": "array", "items": {"type": "string"}},
     }
 
     data_schema = conversion.generate_schema(samples, table_spec)
 
-    return {
-        'type': 'object',
-        'properties': merge_dicts(data_schema, metadata_schema)
-    }
+    return {"type": "object", "properties": merge_dicts(data_schema, metadata_schema)}
+
 
 def merge_dicts(first, second):
     to_return = first.copy()
@@ -116,7 +118,9 @@ def merge_dicts(first, second):
 
 def sample_file(config, table_spec, s3_path, sample_rate):
     file_handle = get_file_handle(config, s3_path)
-    iterator = csv.get_row_iterator(file_handle._raw_stream, table_spec) #pylint:disable=protected-access
+    iterator = csv.get_row_iterator(
+        file_handle._raw_stream, table_spec
+    )  # pylint:disable=protected-access
 
     current_row = 0
 
@@ -128,55 +132,59 @@ def sample_file(config, table_spec, s3_path, sample_rate):
                 row.pop(csv.SDC_EXTRA_COLUMN)
             sampled_row_count += 1
             if (sampled_row_count % 200) == 0:
-                LOGGER.info("Sampled %s rows from %s",
-                            sampled_row_count, s3_path)
+                LOGGER.info("Sampled %s rows from %s", sampled_row_count, s3_path)
             yield row
 
         current_row += 1
 
-    LOGGER.info("Sampled %s rows from %s",
-                sampled_row_count,
-                s3_path)
+    LOGGER.info("Sampled %s rows from %s", sampled_row_count, s3_path)
 
 
 # pylint: disable=too-many-arguments
-def sample_files(config, table_spec, s3_files,
-                 sample_rate=5, max_records=1000, max_files=5):
+def sample_files(
+    config, table_spec, s3_files, sample_rate=5, max_records=1000, max_files=5
+):
     LOGGER.info("Sampling files (max files: %s)", max_files)
     for s3_file in itertools.islice(s3_files, max_files):
-        LOGGER.info('Sampling %s (max records: %s, sample rate: %s)',
-                    s3_file['key'],
-                    max_records,
-                    sample_rate)
-        yield from itertools.islice(sample_file(config, table_spec, s3_file['key'], sample_rate), max_records)
+        LOGGER.info(
+            "Sampling %s (max records: %s, sample rate: %s)",
+            s3_file["key"],
+            max_records,
+            sample_rate,
+        )
+        yield from itertools.islice(
+            sample_file(config, table_spec, s3_file["key"], sample_rate), max_records
+        )
 
 
 def get_input_files_for_table(config, table_spec, modified_since=None):
-    bucket = config['bucket']
+    bucket = config["bucket"]
 
     to_return = []
 
-    pattern = table_spec['search_pattern']
+    pattern = table_spec["search_pattern"]
     try:
         matcher = re.compile(pattern)
     except re.error as e:
         raise ValueError(
-            ("search_pattern for table `{}` is not a valid regular "
-             "expression. See "
-             "https://docs.python.org/3.5/library/re.html#regular-expression-syntax").format(table_spec['table_name']),
-            pattern) from e
+            (
+                "search_pattern for table `{}` is not a valid regular "
+                "expression. See "
+                "https://docs.python.org/3.5/library/re.html#regular-expression-syntax"
+            ).format(table_spec["table_name"]),
+            pattern,
+        ) from e
 
-    LOGGER.info(
-        'Checking bucket "%s" for keys matching "%s"', bucket, pattern)
+    LOGGER.info('Checking bucket "%s" for keys matching "%s"', bucket, pattern)
 
     matched_files_count = 0
     unmatched_files_count = 0
     max_files_before_log = 30000
-    for s3_object in list_files_in_bucket(bucket, table_spec.get('search_prefix')):
-        key = s3_object['Key']
-        last_modified = s3_object['LastModified']
+    for s3_object in list_files_in_bucket(bucket, table_spec.get("search_prefix")):
+        key = s3_object["Key"]
+        last_modified = s3_object["LastModified"]
 
-        if s3_object['Size'] == 0:
+        if s3_object["Size"] == 0:
             LOGGER.info('Skipping matched file "%s" as it is empty', key)
             unmatched_files_count += 1
             continue
@@ -184,23 +192,35 @@ def get_input_files_for_table(config, table_spec, modified_since=None):
         if matcher.search(key):
             matched_files_count += 1
             if modified_since is None or modified_since < last_modified:
-                LOGGER.info('Will download key "%s" as it was last modified %s',
-                            key,
-                            last_modified)
-                yield {'key': key, 'last_modified': last_modified}
+                LOGGER.info(
+                    'Will download key "%s" as it was last modified %s',
+                    key,
+                    last_modified,
+                )
+                yield {"key": key, "last_modified": last_modified}
         else:
             unmatched_files_count += 1
 
         if (unmatched_files_count + matched_files_count) % max_files_before_log == 0:
             # Are we skipping greater than 50% of the files?
-            if (unmatched_files_count / (matched_files_count + unmatched_files_count)) > 0.5:
-                LOGGER.warn(("Found %s matching files and %s non-matching files. "
-                             "You should consider adding a `search_prefix` to the config "
-                             "or removing non-matching files from the bucket."),
-                            matched_files_count, unmatched_files_count)
+            if (
+                unmatched_files_count / (matched_files_count + unmatched_files_count)
+            ) > 0.5:
+                LOGGER.warn(
+                    (
+                        "Found %s matching files and %s non-matching files. "
+                        "You should consider adding a `search_prefix` to the config "
+                        "or removing non-matching files from the bucket."
+                    ),
+                    matched_files_count,
+                    unmatched_files_count,
+                )
             else:
-                LOGGER.info("Found %s matching files and %s non-matching files",
-                            matched_files_count, unmatched_files_count)
+                LOGGER.info(
+                    "Found %s matching files and %s non-matching files",
+                    matched_files_count,
+                    unmatched_files_count,
+                )
 
     if matched_files_count == 0:
         raise Exception("No files found matching pattern {}".format(pattern))
@@ -208,38 +228,39 @@ def get_input_files_for_table(config, table_spec, modified_since=None):
 
 @retry_pattern()
 def list_files_in_bucket(bucket, search_prefix=None):
-    s3_client = boto3.client('s3')
+    s3_client = boto3.client("s3")
 
     s3_object_count = 0
 
     max_results = 1000
-    args = {
-        'Bucket': bucket,
-        'MaxKeys': max_results,
-    }
+    args = {"Bucket": bucket, "MaxKeys": max_results}
 
     if search_prefix is not None:
-        args['Prefix'] = search_prefix
+        args["Prefix"] = search_prefix
 
-    paginator = s3_client.get_paginator('list_objects_v2')
+    paginator = s3_client.get_paginator("list_objects_v2")
     pages = 0
     for page in paginator.paginate(**args):
         pages += 1
         LOGGER.debug("On page %s", pages)
-        s3_object_count += len(page['Contents'])
-        yield from page['Contents']
+        s3_object_count += len(page["Contents"])
+        yield from page["Contents"]
 
     if s3_object_count > 0:
         LOGGER.info("Found %s files.", s3_object_count)
     else:
-        LOGGER.warning('Found no files for bucket "%s" that match prefix "%s"', bucket, search_prefix)
+        LOGGER.warning(
+            'Found no files for bucket "%s" that match prefix "%s"',
+            bucket,
+            search_prefix,
+        )
 
 
 @retry_pattern()
 def get_file_handle(config, s3_path):
-    bucket = config['bucket']
-    s3_client = boto3.resource('s3')
+    bucket = config["bucket"]
+    s3_client = boto3.resource("s3")
 
     s3_bucket = s3_client.Bucket(bucket)
     s3_object = s3_bucket.Object(s3_path)
-    return s3_object.get()['Body']
+    return s3_object.get()["Body"]
