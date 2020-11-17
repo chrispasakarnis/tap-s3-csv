@@ -1,3 +1,4 @@
+import importlib
 import itertools
 import re
 import backoff
@@ -118,7 +119,19 @@ def merge_dicts(first, second):
 
 def sample_file(config, table_spec, s3_path, sample_rate):
     file_handle = get_file_handle(config, s3_path)
-    iterator = csv.get_row_iterator(
+
+    encoding_module = csv
+    if config['encoding_module']:
+        try:
+            encoding_module = importlib.import_module(
+                config['encoding_module']
+            )
+        except ModuleNotFoundError:
+            LOGGER.warning(
+                f'Failed to load encoding module [{config["encoding_module"]}]. Defaulting to [singer_encodings.csv]'
+            )
+
+    iterator = encoding_module.get_row_iterator(
         file_handle._raw_stream, table_spec
     )  # pylint:disable=protected-access
 

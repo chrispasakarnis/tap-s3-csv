@@ -1,3 +1,4 @@
+import importlib
 import sys
 import csv
 
@@ -59,7 +60,19 @@ def sync_table_file(config, s3_path, table_spec, stream, last_modified):
     # need to be fixed. The other consequence of this could be larger
     # memory consumption but that's acceptable as well.
     csv.field_size_limit(sys.maxsize)
-    iterator = singer_encodings_csv.get_row_iterator(
+
+    encoding_module = singer_encodings_csv
+    if config['encoding_module']:
+        try:
+            encoding_module = importlib.import_module(
+                config['encoding_module']
+            )
+        except ModuleNotFoundError:
+            LOGGER.warning(
+                f'Failed to load encoding module [{config["encoding_module"]}]. Defaulting to [singer_encodings.csv]'
+            )
+
+    iterator = encoding_module.get_row_iterator(
         s3_file_handle._raw_stream, table_spec
     )  # pylint:disable=protected-access
 
