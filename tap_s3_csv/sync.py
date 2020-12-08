@@ -62,7 +62,7 @@ def sync_table_file(config, s3_path, table_spec, stream, last_modified):
     csv.field_size_limit(sys.maxsize)
 
     encoding_module = singer_encodings_csv
-    if config['encoding_module']:
+    if 'encoding_module' in config:
         try:
             encoding_module = importlib.import_module(
                 config['encoding_module']
