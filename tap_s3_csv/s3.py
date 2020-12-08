@@ -121,7 +121,7 @@ def sample_file(config, table_spec, s3_path, sample_rate):
     file_handle = get_file_handle(config, s3_path)
 
     encoding_module = csv
-    if config['encoding_module']:
+    if 'encoding_module' in config:
         try:
             encoding_module = importlib.import_module(
                 config['encoding_module']
